@@ -808,6 +808,8 @@ message PromptFeature {
     required string prompt_type = 3;
     // LLM tokenizer, e.g. Qwen3-0.6B
     required string tokenizer = 4;
+    // tokenizer max length
+    required uint32 max_length = 5;
 
 
     // embedding name, feature with same embedding name will share embedding

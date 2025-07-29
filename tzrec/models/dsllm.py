@@ -11,7 +11,6 @@
 
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -22,7 +21,7 @@ from torch._tensor import Tensor
 from tzrec.datasets.utils import BASE_DATA_GROUP, NEG_DATA_GROUP, Batch
 from tzrec.features.feature import BaseFeature
 from tzrec.protos.loss_pb2 import LossConfig
-from tzrec.models.match_model import MatchModel, MatchTower
+from tzrec.models.match_model import MatchModel, MatchTowerWoEG
 from tzrec.protos import model_pb2, simi_pb2, tower_pb2
 from tzrec.utils.fx_util import fx_arange
 
@@ -30,7 +29,7 @@ torch.fx.wrap('len')
 torch.fx.wrap(fx_arange)
 
 
-class LLMTower(MatchTower):
+class DSLLMTower(MatchTowerWoEG):
     """LLM as Tower for user/item embedding generation.
 
     Args:
@@ -45,23 +44,19 @@ class LLMTower(MatchTower):
 
     def __init__(
         self,
-        tower_config: tower_pb2.Tower,
+        tower_config: tower_pb2.LLMTower,
         output_dim: int,
         similarity: simi_pb2.Similarity,
         feature_groups: List[model_pb2.FeatureGroupConfig],
         features: List[BaseFeature],
-        model_config: model_pb2.ModelConfig,
     ) -> None:
-        super().__init__(
-            tower_config, output_dim, similarity, feature_groups, features, model_config
-        )
-        # Initialize LLM model and tokenizer
-        self.model_name = getattr(model_config, 'llm_model_name', 'Qwen3-0.6B')
-        self.max_length = getattr(model_config, 'max_length', 512)
-        self.pooling_method = getattr(model_config, 'pooling_method', 'mean')  # mean, cls, last
-        self.freeze_llm = getattr(model_config, 'freeze_llm', False)
-
-        self.llm_model = AutoModelForCausalLM.from_pretrained(f"Qwen/{self.model_name}")
+        super().__init__(tower_config, output_dim, similarity, feature_groups, features)
+        
+        self.model_name = getattr(tower_config, 'model_name', 'Qwen/Qwen3-0.6B')
+        self.pooling_method = getattr(tower_config, 'pooling_method', 'mean')  # mean, cls, last
+        self.freeze_llm = getattr(tower_config, 'freeze_llm', False)
+        
+        self.llm_model = AutoModelForCausalLM.from_pretrained(self.model_name)
 
         if self.freeze_llm:
             for param in self.llm_model.parameters():
@@ -95,7 +90,6 @@ class LLMTower(MatchTower):
 
     def _get_llm_embeddings(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """Get embeddings from LLM.""" 
-        # with torch.amp.autocast('cuda', enabled=True):
         outputs = self.llm_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -105,11 +99,10 @@ class LLMTower(MatchTower):
         hidden_states = outputs.hidden_states[-1]  # [batch_size, seq_len, hidden_dim]
 
         if self.pooling_method == 'mean':
-            embeddings = hidden_states.mean(dim=1)  # [B, D]
-            # mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float()
-            # sum_embeddings = torch.sum(hidden_states * mask_expanded, 1)
-            # sum_mask = torch.clamp(mask_expanded.sum(1), min=1e-9)
-            # embeddings = sum_embeddings / sum_mask
+            mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float()
+            sum_embeddings = torch.sum(hidden_states * mask_expanded, 1)
+            sum_mask = torch.clamp(mask_expanded.sum(1), min=1e-9)
+            embeddings = sum_embeddings / sum_mask
         elif self.pooling_method == 'cls':
             embeddings = hidden_states[:, 0]
         elif self.pooling_method == 'last':
@@ -182,22 +175,20 @@ class DSLLM(MatchModel):
         user_features = self.get_features_in_feature_groups([user_group])
         item_features = self.get_features_in_feature_groups([item_group])
 
-        self.user_tower = LLMTower(
+        self.user_tower = DSLLMTower(
             self._model_config.user_tower,
             self._model_config.output_dim,
             self._model_config.similarity,
             [user_group],
             user_features,
-            model_config,
         )
 
-        self.item_tower = LLMTower(
+        self.item_tower = DSLLMTower(
             self._model_config.item_tower,
             self._model_config.output_dim,
             self._model_config.similarity,
             [item_group],
             item_features,
-            model_config,
         )
 
         self.use_focal_loss = getattr(model_config, 'use_focal_loss', True)
@@ -264,7 +255,7 @@ class DSLLM(MatchModel):
         if self.use_focal_loss:
             labels = torch.zeros_like(pred)
             labels[:, 0] = 1.0
-
+            # TODO: need add focal loss, now I just use softmax_cross_entropy loss but actually calculate focal loss
             # losses["binary_focal_loss" + suffix] = self._focal_loss(pred, labels)
             losses[loss_name] = self._focal_loss(pred, labels)
         else:

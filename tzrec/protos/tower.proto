@@ -19,6 +19,17 @@ message HSTUMatchTower {
     required HSTUEncoder hstu_encoder = 2;
 }
 
+message LLMTower {
+    // input feature group name
+    required string input = 1;
+    // LLM model name
+    required string model_name = 2;
+    // embedding pooling method
+    required string pooling_method = 3;
+    // freeze LLM's parameter
+    required bool freeze_llm = 4;
+};
+
 message DINTower {
     // input feature group name
     required string input = 1;

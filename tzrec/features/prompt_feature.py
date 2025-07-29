@@ -201,6 +201,7 @@ class PromptFeature(BaseFeature):
         super().__init__(feature_config, fg_mode, fg_encoded_multival_sep)
 
         self._tokenizer = AutoTokenizer.from_pretrained(f"Qwen/{self.config.tokenizer}")
+        self.max_length = self.config.max_length
 
     @property
     def name(self) -> str:
@@ -270,7 +271,7 @@ class PromptFeature(BaseFeature):
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=512
+            max_length=self.max_length
         )
         return model_inputs
 

@@ -32,8 +32,8 @@ message HSTUMatch {
 }
 
 message DSLLM {
-    required Tower user_tower = 1;
-    required Tower item_tower = 2;
+    required LLMTower user_tower = 1;
+    required LLMTower item_tower = 2;
     // user and item tower output dimension
     required int32 output_dim = 3;
     // similarity method
