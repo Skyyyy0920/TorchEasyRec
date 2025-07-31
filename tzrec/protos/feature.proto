@@ -810,6 +810,8 @@ message PromptFeature {
     required string tokenizer = 4;
     // tokenizer max length
     required uint32 max_length = 5;
+    // prompt template path
+    required string prompt_template_path = 6;
 
 
     // embedding name, feature with same embedding name will share embedding

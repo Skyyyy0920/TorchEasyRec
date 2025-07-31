@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pyarrow as pa
+from jinja2 import Template
 from modelscope import AutoTokenizer
 
 from tzrec.datasets.utils import ParsedData, SparseData
@@ -24,136 +25,8 @@ from tzrec.features.feature import (
 )
 from tzrec.protos.feature_pb2 import FeatureConfig
 
-CATEGORY_MAPPING = {
-    'OTHER': '其他',
-    'CHINASTUDIES': '国学',
-    'YOGA': '瑜伽',
-    'ZHONGYI': '中医',
-    'Pilates': '普拉提',
-    'SHORT_VIDEO': '短视频',
-    'PHONE_PHOTOGRAPHY': '手机摄影',
-    'SING': '唱歌',
-    'CHUANDA': '穿搭',
-    'EAT_THIN': '吃瘦',
-    'FIVEFOWLPLAYS': '五禽戏',
-    'Cameraphotography': '相机摄影',
-    'QIXUE_TIAOLI': '气血调理',
-    'LIFE': '生活',
-    'GUQIHUOXUE': '古琴活学',
-    'DANCE': '舞蹈',
-    'ASTROLOGY': '占星',
-    'YIJING': '易经',
-    'ZMGJ': '正面管教',
-    'Videoclip': '视频剪辑',
-    'TAROT': '塔罗',
-    'shequceshileimu': '社区测试类目',
-    np.nan: '未知类别',
-    None: '未知类别',
-    '': '未知类别'
-}
 SYSTEM_USER_PROMPT = """你是一个用户表征编码器，将以下用户特征转换为适合推荐系统使用的高质量表征向量。"""
 SYSTEM_ITEM_PROMPT = """你是一个内容表征编码器，将以下内容特征转化为适合推荐系统使用的高质量表征向量。"""
-
-def build_user_prompt(row):
-    base_template = """用户是来自{city}的{gender}性，账户等级{growth_level}{new_user_tag}。
-最近活跃于周{week_day}{day_h}时，历史点击{item_cnt}次内容。
-用户关注{follow_cnt}人，拥有{follower_cnt}粉丝，收藏{favorite_cnt}内容。
-已购买{buy_camp_cnt}门课程，{category_name_list}。
-用户近期点击内容类别：{formatted_category_seq}
-近期点击内容标题：{formatted_item_title_seq}
-根据以上用户特征生成综合表征向量："""
-
-
-    def format_seq(seq):
-        if len(seq) > 30:
-            leng = len(seq)
-            seq = seq[leng-30:]
-        seq = [f"'{item}'" for item in seq if item.strip() != '']
-        return ", ".join([f"{item}" for item in seq])
-
-    def analyze_purchases(cat_list):
-        counter = Counter(cat_list)
-        total = len(cat_list)
-
-        frequent = [f"{k}{v}门" for k,v in counter.items()]
-        return "其中" + "，".join(frequent) if total > 0 else "暂无显著消费倾向"
-
-    def format_category_seq(seq):
-        counter = Counter(seq)
-
-        main_cats = {k:v for k,v in counter.items()}
-        sorted_cats = sorted(main_cats.items(), key=lambda x: -x[1])
-
-        parts = []
-        for cat, cnt in sorted_cats:
-            translated = CATEGORY_MAPPING.get(cat, cat)
-            parts.append(f"{translated}{cnt}次")
-
-        return "、".join(parts)
-
-    week_day_cn = "一二三四五六七"
-    week_day = week_day_cn[row["week_day"]-1]
-    new_user = "是新用户，" if row['is_new_user'] == 1 else ""
-    if row['gender'] == 0:
-        gender = '男'
-    elif row['gender'] == 1:
-        gender = '女'
-    else:
-        gender = '未知'
-
-    prompt = base_template.format(
-        city=row['city'],
-        gender=gender,
-        day_h=row['day_h'],
-        week_day=week_day,
-        is_new_user=new_user,
-        growth_level=f"{row['growth_level'] or 0:.0f}",
-        new_user_tag="(新用户)" if row['is_new_user'] == 1 else "",
-        buy_camp_cnt=f"{row['buy_camp_cnt'] or 0:.0f}",
-        item_cnt=f"{row['item_cnt'] or 0:.0f}",
-        follow_cnt=f"{row['follow_cnt'] or 0:.0f}",
-        follower_cnt=f"{row['follower_cnt'] or 0:.0f}",
-        favorite_cnt=f"{row['favorite_cnt'] or 0:.0f}",
-        category_name_list=analyze_purchases(row['category_name_list']),
-        formatted_category_seq=format_category_seq(row['click_50_seq__category']),
-        formatted_item_title_seq=format_seq(row['click_50_seq__item_title']),
-    )
-
-    return prompt
-
-
-def build_item_prompt(row):
-    base_template = """内容标题为：{title}，一级标签为{category}。类型为{type}，发布于{pub_time}，{status}被推荐。
-作者身份为{author_status}，发布源为{publish}。
-内容获得{praise}点赞，{comment}评论，{collect}收藏，{share}分享。
-根据以上内容特征生成综合表征向量："""
-
-
-    if row['pub_time'] is None:
-        pub_time = datetime.now().strftime("%Y-%m-%d")
-    else:
-        pub_time = datetime.fromtimestamp(row['pub_time']).strftime("%Y-%m-%d")
-    status = "已" if row['status'] else "未"
-    home_mark = "属于" if row['home_mark'] == 'Y' else "不属于"
-    club_mark = "属于" if row['club_mark'] == 'Y' else "不属于"
-
-    prompt = base_template.format(
-        type=row['item_type'],
-        pub_time=pub_time,
-        status=status,
-        title=row['title'],
-        category=CATEGORY_MAPPING.get(row['category'], row['category']),
-        author_status=row['author_status'],
-        praise=f"{row['praise_count'] or 0:.0f}",
-        comment=f"{row['comment_count'] or 0:.0f}",
-        collect=f"{row['collect_count'] or 0:.0f}",
-        share=f"{row['share_count'] or 0:.0f}",
-        publish=row['publish_source'],
-        home_mark=home_mark,
-        club_mark=club_mark,
-    )
-
-    return prompt
 
 
 def tokens_to_sparse(model_inputs: Dict[str, np.ndarray], name: str) -> SparseData:
@@ -202,6 +75,10 @@ class PromptFeature(BaseFeature):
 
         self._tokenizer = AutoTokenizer.from_pretrained(f"Qwen/{self.config.tokenizer}")
         self.max_length = self.config.max_length
+        
+        self.prompt_template_path = self.config.prompt_template_path
+        with open(self.prompt_template_path, "r", encoding="utf-8") as f:
+            self._prompt_template = Template(f.read())
 
     @property
     def name(self) -> str:
@@ -240,15 +117,10 @@ class PromptFeature(BaseFeature):
             return [tuple(x.split(":")) for x in self.config.expression]
         else:
             return None
-
+        
     def _build_prompt(self, row_data: Dict[str, Any]) -> str:
-        """Parse row data to generate prompt."""
-        if self.prompt_type == 'user':
-            return build_user_prompt(row_data)
-        elif self.prompt_type == 'item':
-            return build_item_prompt(row_data)
-        else:
-            raise ValueError(f"Unsupported prompt_type: {self.prompt_type}")
+        """Render the prompt using user-provided Jinja2 template."""
+        return self._prompt_template.render(**row_data).strip()
 
     def _prepare_input(self, prompts: List[str]) -> Dict:
         """Tokenize a list of prompts to token ids in batch."""
@@ -308,6 +180,8 @@ class PromptFeature(BaseFeature):
 
                 # Generate and tokenize prompt
                 prompt = self._build_prompt(sample_data)
+                if self.prompt_type == 'item':
+                    print(prompt)
                 prompts_list.append(prompt)
 
             model_inputs = self._prepare_input(prompts_list)
@@ -335,23 +209,3 @@ class PromptFeature(BaseFeature):
             fg_cfg["separator"] = self.config.separator
 
         return [fg_cfg]
-
-    def generate_chat_messages(self, features: List[Dict[str, Any]]) -> List[List[Dict[str, str]]]:
-        """Generate chat messages for LLM processing."""
-        if self._prompt_type == 'user':
-            system_prompt = SYSTEM_USER_PROMPT
-            prompt_builder = build_user_prompt
-        elif self._prompt_type == 'item':
-            system_prompt = SYSTEM_ITEM_PROMPT
-            prompt_builder = build_item_prompt
-        else:
-            raise ValueError(f"Unsupported prompt_type: {self._prompt_type}")
-
-        messages = [
-            [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt_builder(feat['sample'])}
-            ] for feat in features
-        ]
-
-        return messages

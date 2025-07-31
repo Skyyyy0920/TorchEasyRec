@@ -1,0 +1,44 @@
+{% macro gender_str(gender) -%}
+{{ '男' if gender == 0 else '女' if gender == 1 else '未知' }}
+{%- endmacro %}
+
+{% macro week_day_cn(idx) -%}
+{{ ['一', '二', '三', '四', '五', '六', '七'][idx - 1] }}
+{%- endmacro %}
+
+{% macro format_seq(seq) -%}
+{%- set filtered = seq | select('string') | reject('equalto', '') | list -%}
+{%- set last_30 = filtered[-30:] -%}
+'{{ last_30 | join("', '") }}'
+{%- endmacro %}
+
+{% macro analyze_purchases(cat_list) -%}
+{%- if cat_list|length > 0 -%}
+    {%- set counter = namespace(map={}) -%}
+    {%- for cat in cat_list -%}
+        {%- set _ = counter.map.update({cat: counter.map.get(cat, 0) + 1}) -%}
+    {%- endfor -%}
+    其中{{ counter.map.items() | map(attribute=0) | list | map('string') | join('，') }}门
+{%- else -%}
+    暂无显著消费倾向
+{%- endif -%}
+{%- endmacro %}
+
+{% macro format_category_seq(seq) -%}
+{%- set counter = namespace(map={}) -%}
+{%- for cat in seq -%}
+    {%- set _ = counter.map.update({cat: counter.map.get(cat, 0) + 1}) -%}
+{%- endfor -%}
+{%- set sorted = counter.map.items() | sort(attribute=1, reverse=True) -%}
+{%- for cat, count in sorted -%}
+{{ cat }}{{ count }}次{{ "、" if not loop.last }}
+{%- endfor -%}
+{%- endmacro %}
+
+用户是来自{{ city }}的{{ gender_str(gender) }}性，账户等级{{ growth_level }}{% if is_new_user == 1 %}(新用户){% endif %}。
+最近活跃于周{{ week_day_cn(week_day) }}{{ day_h }}时，历史点击{{ item_cnt }}次内容。
+用户关注{{ follow_cnt }}人，拥有{{ follower_cnt }}粉丝，收藏{{ favorite_cnt }}内容。
+已购买{{ buy_camp_cnt }}门课程，{{ analyze_purchases(category_name_list) }}。
+用户近期点击内容类别：{{ format_category_seq(click_50_seq__category) }}
+近期点击内容标题：{{ format_seq(click_50_seq__item_title) }}
+根据以上用户特征生成综合表征向量：
